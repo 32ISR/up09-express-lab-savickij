@@ -33,7 +33,8 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     bookId INTEGER NOT NULL,
     userId INTEGER NOT NULL,
-    rating INTEGER NOT NULL check (rating between 1 and 5), 
+    comment TEXT NOT NULL,
+    rating INTEGER NOT NULL check (rating between 1 and 5),
     createdAt TEXT DEFAULT (datetime('now')),
     FOREIGN KEY (bookId) REFERENCES books(id) ON DELETE CASCADE,
     FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE

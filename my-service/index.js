@@ -1,16 +1,37 @@
 const express = require("express")
 const db = require("./db")
+const bcr = require("bcryptjs")
+const jwt = require("jsonwebtoken")
 const app = express()
-const bcr = require('bcryptjs')
-const jwt = require('jsonwebtoken')
+
 app.use(express.json())
+
 const PORT = 3000
-const SECRET = "123321123"
+const SECRET = ('159357')
 
 
-app.post("/api/auth/register", (req, res) => {
+const auth = (req, res, next) => {
+    const authHeader = req.headers.authorization
+
+    if (!authHeader) return res.status(401).json({ error: "Failed to provide token" })
+
+    const token = authHeader.split(" ")[1]
+    if (!token) return res.status(401).json({ error: "Token has invalid form" })
+
     try {
-        console.log(req.body);
+        const decoded = jwt.verify(token, SECRET)
+        req.user = decoded
+        next()
+    } catch (error) {
+        console.error(error)
+        return res.status(403).json({ error: "Invalid token" })
+    }
+}
+
+app.post("/api/auth/signup", (req, res) => {
+    console.log(req.body);
+
+    try {
         const { username, password, email } = req.body
 
         if (!username || !password) {
@@ -49,22 +70,19 @@ app.post("/api/auth/register", (req, res) => {
     }
 })
 
-app.post("/api/auth/login", (req, res) => {
+app.post("/api/auth/signin", (req, res) => {
     try {
         const { username, password } = req.body
+
         if (!username || !password) {
             return res.status(400).json({ error: "Missing data" })
         }
 
-        const user = db.prepare(
-            "SELECT * FROM users WHERE username = ?"
-        ).get(username)
-        if (!user) {
-            return res.status(400).json({ error: "Пользователя нету" })
-        }
+        const user = db.prepare("SELECT * FROM users WHERE username = ?").get(username)
+        if (!user) return res.status(401).json({ error: "Неправильный пароль" })
 
         const valid = bcr.compareSync(password, user.password)
-        if (!valid) return res.status(400).json({ error: "Пароль невереный" })
+        if (!valid) return res.status(401).json({ error: "Неправильный пароль" })
 
         const { password: _, ...safeUser } = user
         const token = jwt.sign({ ...safeUser }, SECRET, { expiresIn: "24h" })
@@ -74,61 +92,66 @@ app.post("/api/auth/login", (req, res) => {
         return res.status(500).json({ error: "Something wrong" })
     }
 })
-app.get("/api/auth/profile", (req, res) => {
+
+app.get("/api/auth/profile", auth, (req, res) => {
     try {
-        const user = db.prepare(
+        const profile = db.prepare(
             "SELECT * FROM users WHERE id = ?"
         ).get(req.user.id)
-        const{password, ...safeUser} = user
-        return res.status(200).jason(safeUser)
+        const { password, ...safeUser } = profile
+        return res.status(200).json(safeUser)
     } catch (error) {
         console.error(error)
-        return res.status(500).json({ error: "Something wrong" })
+        return res.status(500).json({ error: "Failed to fetch" })
     }
 })
 
-app.post("/auth/books", (req,res)=>{
+app.post("/api/books", auth, (req, res) => {
     try {
-        const{ title,author,year,genre,description } = req.body
+        const { title, author, year, genre, description } = req.body
 
-        if (!title||!title) {
+        if (!title || !title.trim()) {
             return res
-            .status(400)
-            .json({error:"Нужно название"})
+                .status(400)
+                .json({ error: "Нужно название" })
         }
 
-        if(!author||!author){
-            return res.status(400).json({error:"Нужен автор"})
+        if (!author || !author.trim()) {
+            return res
+                .status(400)
+                .json({ error: "Нужен автор" })
         }
 
-        if(!year||!year){
-            return res.status(400).json({error:"Нужен год"})
+        if (!year || year <= 0) {
+            return res
+                .status(400)
+                .json({ error: "Нужен год" })
         }
-
-        if(!genre||!genre){
-            return res.status(400).json({error:"Нужен жанр"})
+        if (!genre || !genre.trim()) {
+            return res
+                .status(400)
+                .json({ error: "Нужен жанр" })
         }
-
-        if(!description||!description){
-            return res.status(400).json({error:"Нужно описание"})
+        if (!description || !description.trim()) {
+            return res
+                .status(400)
+                .json({ error: "Нужно описание" })
         }
 
         const info = db.prepare(`
-            INSERT INTO books ( title,author,year,genre,description ,createdBy)
-            VALUES(?,?,?,?,?,?)
-            `).run(title.trim(),author.trim(),Number(year), genre.trim(),description.trim(),req.user.id
+            INSERT INTO books (title, author, year, genre, description, createdBy)
+            VALUES (?, ?, ?, ?, ?, ?)
+            `).run(title.trim(), author.trim(), Number(year), genre.trim(), description.trim(), req.user.id
         )
 
         const newBooks = db
-        .prepare(`SELECT * FROM books WHERE id = ?`)
-        .get(info.lastInsertRowid)
+            .prepare("SELECT * FROM books WHERE id = ?")
+            .get(info.lastInsertRowid)
 
-        const {password: _, ...safeUser} = newUser
-
-         return res.status(201).json(newBooks)
+        return res.status(201).json(newBooks)
     } catch (err) {
         console.error(err)
-        return res.status(500).json({error:"Failed to fetch"})
+        return res.status(500).json({ error: "Failed to create" })
     }
 })
 
@@ -137,11 +160,81 @@ app.get("/api/books", (req, res) => {
         const books = db.prepare(
             "SELECT * FROM books"
         ).all()
-         return res.status(201).json(books)
+
+        return res.status(200).json(books)
     } catch (err) {
         console.error(err)
-        return res.status(500).json({error:"Failed to fetch"})
+        return res.status(500).json({ error: "Failed to fetch" })
     }
 })
+
+app.post("/api/books/:id/reviews", auth, (req, res) => {
+    try {
+        const { rating, comment } = req.body
+        const { id } = req.params
+        const book = db.prepare("SELECT * FROM books WHERE id = ?").get(id)
+
+        if (!book) {
+            return res
+                .status(404)
+                .json({ error: "Книга не найдена" })
+        }
+
+        if (!rating || !(rating > 0 && rating <= 5)) {
+            return res
+                .status(400)
+                .json({ error: "Нужен рейтинг" })
+        }
+
+        if (!comment || !comment.trim()) {
+            return res
+                .status(400)
+                .json({ error: "Нужен автор" })
+        }
+
+        const info = db.prepare(`
+            INSERT INTO review (userId, bookId, rating, comment)
+            VALUES (?, ?, ?, ?)
+            `).run(req.user.id, id, Number(rating), comment.trim())
+
+        const newReview = db
+            .prepare("SELECT * FROM review WHERE id = ?")
+            .get(info.lastInsertRowid)
+        return res.status(201).json(newReview)
+
+    } catch (error) {
+        console.error(error)
+        return res.status(500).json({ error: "Failed to create" })
+    }
+})
+
+app.delete("/api/reviews/:id", auth, (req, res) => {
+    try {
+        const { id } = req.params
+        const review = db.prepare("SELECT * FROM review WHERE id = ?").get(id)
+        if (!review) return res.status(404).json({ error: "Отзыв не найден" })
+
+    db.prepare('DELETE FROM review WHERE id = ?').run(id)
+    return res.status(200).json({ message: 'Deleted successfully' })
+    } catch (error) {
+        console.error(error)
+        res.status(500).json({ error: "Something went wrong" })
+    }
+})
+
+app.delete("/api/books/:id", auth, (req, res) => {
+    try {
+        const { id } = req.params
+        const book = db.prepare("SELECT * FROM books WHERE id = ?").get(id)
+        if (!book) return res.status(404).json({ error: "Книга не найдена" })
+
+    db.prepare('DELETE FROM books WHERE id = ?').run(id)
+    return res.status(200).json({ message: 'Deleted successfully' })
+    } catch (error) {
+        console.error(error)
+        res.status(500).json({ error: "Something went wrong" })
+    }
+})
+
 
 app.listen(PORT)
