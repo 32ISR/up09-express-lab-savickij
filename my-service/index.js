@@ -32,9 +32,9 @@ app.post("/api/auth/signup", (req, res) => {
     console.log(req.body);
 
     try {
-        const { username, password, email } = req.body
+        const { username, password, email, role } = req.body
 
-        if (!username || !password) {
+        if (!username  || !role || !password) {
             return res.status(400).json({ error: "." })
         }
 
@@ -53,7 +53,6 @@ app.post("/api/auth/signup", (req, res) => {
 
         const salt = bcr.genSaltSync(10)
         const hash = bcr.hashSync(password, salt)
-        const role = "user"
 
         const info = db.prepare(`INSERT INTO users (username, email, password, role)
             VALUES(?,?,?,?)`).run(username.trim(), email.trim(), hash, role)
@@ -228,6 +227,7 @@ app.delete("/api/books/:id", auth, (req, res) => {
         const book = db.prepare("SELECT * FROM books WHERE id = ?").get(id)
         if (!book) return res.status(404).json({ error: "Книга не найдена" })
 
+        if (book.userId !== req.user.id || req.user.role !== "admin") return res.status(200).json({ message: '' })
     db.prepare('DELETE FROM books WHERE id = ?').run(id)
     return res.status(200).json({ message: 'Deleted successfully' })
     } catch (error) {
@@ -236,5 +236,88 @@ app.delete("/api/books/:id", auth, (req, res) => {
     }
 })
 
+app.get("/api/books/:id", (req, res) => {
+    try {
+        const { id } = req.params
+        const book = db.prepare("SELECT * FROM books WHERE id = ?").get(id)
+        if (!book) return res.status(404).json({ error: "Книга не найдена" })
+        const review = db.prepare("SELECT * FROM review WHERE bookId = ?").get(id)
+        return res.status(200).json({ ...book, reviews: review })
+    } catch (error) {
+        console.error(error)
+        res.status(500).json({ error: "Something went wrong" })
+    }
+})
+
+app.get("/api/books/:id/review", (req, res) => {
+    try {
+        const { id } = req.params
+        const book = db.prepare("SELECT * FROM books WHERE id = ?").get(id)
+        if (!book) return res.status(404).json({ error: "Книга не найдена" })
+        const review = db.prepare("SELECT * FROM review WHERE bookId = ?").all(id)
+        return res.status(200).json(review)
+    } catch (error) {
+        console.error(error)
+        res.status(500).json({ error: "Something went wrong" })
+    }
+})
+
+app.get("/api/admin/users", auth, (req, res) => {
+    try {
+        if (req.user.role !== "admin")
+            return res.status(403).json({ error: "u aren't admin" })
+        const user = db.prepare("SELECT * FROM users").all()
+        return res.status(200).json(user)
+    } catch (error) {
+        console.log(error);
+        return res.status(500).json({ error: "Something went wrong" })
+    }
+})
+
+app.delete("/api/admin/users/:id", auth, (req, res) => {
+    try {
+
+        if (req.user.role !== "admin")
+            return res.status(403).json({ error: "u aren't admin" })
+        const { id } = req.params
+        const user = db.prepare("SELECT * FROM users WHERE id = ?").get(id)
+        if (!user) return res.status(404).json({ error: "Юзер не найден" })
+
+        db.prepare('DELETE FROM users WHERE id = ?').run(id)
+        return res.status(200).json({ message: 'Deleted successfully' })
+    } catch (error) {
+        console.error(error)
+        res.status(500).json({ error: "Something went wrong" })
+    }
+})
+
+app.put("/api/books/:id", auth, (req, res) => {
+    try {
+        const { id } = req.params
+        const item = db.prepare("SELECT * FROM books WHERE id = ?").get(id)
+        if (!item) {
+            return res.status(404).json({ error: "Book not found" });
+        }
+        const newItem = { ...item, ...req.body }
+
+        console.log(newItem);
+        
+        const updateStmt = db.prepare("UPDATE books SET title = ?, author = ?, year = ?, genre = ?, description = ? WHERE id = ? ")
+        const result = updateStmt.run(
+            newItem.title,
+            newItem.author,
+            newItem.year,
+            newItem.genre,
+            newItem.description,
+            id
+        );
+        const newItemFromDB = db.prepare("SELECT * FROM books WHERE id = ?").get(id)
+
+        res.status(200).json({newItemFromDB});
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Failed to update book" });
+    }
+})
 
 app.listen(PORT)
